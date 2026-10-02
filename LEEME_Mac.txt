@@ -1,0 +1,16 @@
+DJ Duplicate Finder v3 para macOS
+
+El kit construye la versión basada en la aplicación v3.0.4 de Windows. La app final incluye Python, NumPy, FFmpeg y ffprobe. Quien use el .dmg no necesita instalarlos.
+
+Para generar el instalador en una Mac:
+1. Descomprime este kit.
+2. En Terminal, entra en la carpeta descomprimida.
+3. Ejecuta: bash build_macos.sh
+
+El script construye para el procesador de esa Mac (Apple Silicon arm64 o Intel x86_64) y crea el .dmg en dist-mac. La Mac que compila necesita conexión a Internet y Homebrew; el script instala Python/Tkinter y FFmpeg en el entorno de compilación. Esos requisitos no se trasladan al usuario final.
+
+El kit se preparó en Windows, por lo que no contiene un .app ya compilado. PyInstaller debe crear la aplicación en macOS, así que el .dmg final requiere ejecutar el script en una Mac o en un servicio de compilación macOS.
+
+La app no incluye firma Developer ID ni notarización de Apple. macOS puede mostrar una advertencia al abrirla. Para distribuirla sin esa advertencia se requiere firmarla y notarizarla con una cuenta Apple Developer.
+
+En macOS la actualización se instala reemplazando la app por la versión nueva. La actualización automática incluida en la interfaz sigue disponible en Windows.
