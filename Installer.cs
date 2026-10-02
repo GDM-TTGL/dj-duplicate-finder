@@ -245,7 +245,7 @@ internal sealed class SetupForm : Form
         using (RegistryKey key = Registry.CurrentUser.CreateSubKey(keyPath))
         {
             key.SetValue("DisplayName", "DJ Duplicate Finder");
-            key.SetValue("DisplayVersion", "3.0.4");
+            key.SetValue("DisplayVersion", "3.0.5");
             key.SetValue("Publisher", "DJ Duplicate Finder");
             key.SetValue("InstallLocation", installRoot);
             key.SetValue("UninstallString", "\"" + powershell + "\" -NoProfile -ExecutionPolicy Bypass -File \"" + uninstallScript + "\"");

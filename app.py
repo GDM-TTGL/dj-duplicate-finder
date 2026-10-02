@@ -2,10 +2,11 @@
 import ctypes, hashlib, json, os, queue, shutil, subprocess, sys, tempfile, threading, zipfile
 from pathlib import Path
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, simpledialog
 from core import scan, quarantine, restore, write_csv, Cancelled
+from updates import UpdateError, load_token, save_token, get_latest_release, download_update
 
-APP_VERSION = '3.0.4'
+APP_VERSION = '3.0.5'
 
 class App(tk.Tk):
     def __init__(self):
@@ -45,7 +46,7 @@ class App(tk.Tk):
         actions = ttk.Frame(container); actions.pack(fill='x', pady=(0, 6))
         self.action_buttons = []
         commands = [('Marcar copias exactas',self.mark_exact),('Reproducir',self.play),('Exportar CSV',self.export),('Ver incidencias',self.errors),('Mover marcados',self.move),('Restaurar sesión',self.restore_session)]
-        if sys.platform == 'win32': commands.append(('Aplicar actualización',self.apply_update))
+        if sys.platform == 'win32' and getattr(sys, 'frozen', False): commands.append(('Buscar actualizaciones',self.check_github_updates))
         for title, command in commands:
             b = ttk.Button(actions,text=title,command=command); self.action_buttons.append(b)
         self.cancel_button = ttk.Button(actions,text='Cancelar análisis',command=self.cancel.set)
@@ -68,6 +69,10 @@ class App(tk.Tk):
         self.hint_labels[1].pack(anchor='w')
         self.after_idle(lambda: self.layout_actions(actions.winfo_width()))
         self.protocol('WM_DELETE_WINDOW',self.close); self.after(100,self.poll); self.after(800,self.refresh_windows_shortcuts)
+        if sys.platform == 'win32' and getattr(sys, 'frozen', False):
+            try:
+                if load_token(): self.after(1600, lambda: self.check_github_updates(silent=True))
+            except UpdateError: pass
 
     def choose(self):
         folder = filedialog.askdirectory()
@@ -105,6 +110,11 @@ class App(tk.Tk):
                 elif kind=='restored':
                     self.report=None; self.rows.clear(); self.selected.clear(); self.tree.delete(*self.tree.get_children()); self.status.set(f'{value} archivos restaurados. Vuelve a analizar.')
                 elif kind=='cancelled': self.status.set('Análisis cancelado. No se movió ningún archivo.')
+                elif kind=='github_release': self._on_github_release(*value)
+                elif kind=='update_downloaded': self.install_update_package(value)
+                elif kind=='update_error':
+                    self.status.set('No se pudo completar la actualización desde GitHub.')
+                    messagebox.showerror('Actualización de GitHub', value)
                 else:
                     self.status.set('Operación interrumpida; revisa el detalle.'); messagebox.showerror('Detalle',value)
                     if self.report: self.report=None; self.selected.clear(); self.rows.clear(); self.tree.delete(*self.tree.get_children())
@@ -170,7 +180,7 @@ class App(tk.Tk):
         self.destroy()
 
     def refresh_windows_shortcuts(self):
-        if sys.platform != 'win32':
+        if sys.platform != 'win32' or not getattr(sys, 'frozen', False):
             return
         bundle_root = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent))
         script = bundle_root / 'assets' / 'refresh_taskbar_icon.ps1'
@@ -266,12 +276,65 @@ class App(tk.Tk):
             for label in self.hint_labels:
                 label.configure(wraplength=width)
 
-    def apply_update(self):
+    def check_github_updates(self, silent=False):
         if sys.platform != 'win32':
-            messagebox.showinfo('Actualización', 'La actualización incremental está disponible en la versión de Windows.')
             return
-        package=filedialog.askopenfilename(title='Selecciona el paquete de actualización',filetypes=[('Actualización DJ Duplicate Finder','*.zip')])
-        if not package: return
+        if self.busy: return
+        try:
+            token = load_token()
+        except UpdateError as exc:
+            if not silent: messagebox.showerror('Actualización de GitHub', str(exc))
+            return
+        if not token:
+            if silent: return
+            messagebox.showinfo(
+                'Conectar con GitHub',
+                'Como el repositorio es privado, autoriza una vez una credencial de solo lectura. '
+                'Crea un token fine-grained para GDM-TTGL/dj-duplicate-finder con permiso Contents: Read-only. '
+                'GitHub muestra el token una sola vez. Se guardará en el Administrador de credenciales de Windows, '
+                'no en archivos ni en el repositorio.'
+            )
+            token = simpledialog.askstring('Token de acceso de GitHub', 'Pega el token fine-grained de solo lectura:', show='*', parent=self)
+            if not token: return
+            token = token.strip()
+        self.set_busy(True)
+        self.status.set('Buscando una versión nueva en el Release privado de GitHub…')
+        def worker():
+            try: self.messages.put(('github_release', (token, get_latest_release(token))))
+            except Exception as exc: self.messages.put(('update_error', str(exc)))
+        threading.Thread(target=worker, daemon=True).start()
+
+    @staticmethod
+    def version_tuple(value):
+        return tuple(int(part) for part in str(value).strip().lstrip('vV').split('.'))
+
+    def _on_github_release(self, token, release):
+        try:
+            save_token(token)
+            latest = release['tag_name']
+            if self.version_tuple(latest) <= self.version_tuple(APP_VERSION):
+                self.status.set(f'Ya tienes la versión más reciente (v{APP_VERSION}).')
+                messagebox.showinfo('Actualizaciones', f'Ya tienes la versión más reciente: v{APP_VERSION}.')
+                return
+            asset = release['asset']
+            if not messagebox.askyesno(
+                'Actualización disponible',
+                f'Está disponible DJ Duplicate Finder {latest}.\n\n'
+                'La app descargará y verificará el paquete desde GitHub. Después se cerrará, instalará la actualización y volverá a abrirse. ¿Continuar?'
+            ):
+                self.status.set(f'Actualización v{latest} disponible. Puedes instalarla después desde Buscar actualizaciones.')
+                return
+            self.set_busy(True)
+            self.status.set(f'Descargando y verificando la actualización {latest} desde GitHub…')
+            def worker():
+                try: self.messages.put(('update_downloaded', download_update(token, asset)))
+                except Exception as exc: self.messages.put(('update_error', str(exc)))
+            threading.Thread(target=worker, daemon=True).start()
+        except Exception as exc:
+            self.status.set('No se pudo validar la versión recibida de GitHub.')
+            messagebox.showerror('Actualización de GitHub', str(exc))
+
+    def install_update_package(self, package):
         staging=None
         try:
             staging=Path(tempfile.mkdtemp(prefix='djdf-update-'))
@@ -281,10 +344,11 @@ class App(tk.Tk):
                 manifest=json.loads(archive.read('manifest.json').decode('utf-8'))
                 if manifest.get('product') != 'DJ Duplicate Finder': raise ValueError('El paquete no corresponde a esta aplicación.')
                 version=str(manifest['version'])
-                def version_tuple(value): return tuple(int(part) for part in value.split('.'))
-                if version_tuple(version)<=version_tuple(APP_VERSION): raise ValueError('El paquete debe ser de una versión posterior a la instalada.')
+                if self.version_tuple(version)<=self.version_tuple(APP_VERSION): raise ValueError('El paquete debe ser de una versión posterior a la instalada.')
                 source_version=manifest.get('from_version')
-                if source_version and version_tuple(source_version)!=version_tuple(APP_VERSION): raise ValueError(f'Este paquete es para la versión {source_version}, no para la {APP_VERSION}.')
+                supported_versions=manifest.get('from_versions')
+                if source_version and self.version_tuple(source_version)!=self.version_tuple(APP_VERSION): raise ValueError(f'Este paquete es para la versión {source_version}, no para la {APP_VERSION}.')
+                if supported_versions and APP_VERSION not in supported_versions: raise ValueError(f'El paquete no admite actualizar desde la versión {APP_VERSION}.')
                 files=manifest.get('files')
                 if not isinstance(files,list) or not files: raise ValueError('El manifiesto no enumera archivos para actualizar.')
                 root=Path(sys.executable).resolve().parent
@@ -297,6 +361,7 @@ class App(tk.Tk):
                     data=archive.read(entry)
                     if hashlib.sha256(data).hexdigest().lower()!=str(item['sha256']).lower(): raise ValueError('La verificación de integridad falló.')
                     target=payload.joinpath(*rel.parts); target.parent.mkdir(parents=True,exist_ok=True); target.write_bytes(data)
+            Path(package).unlink(missing_ok=True)
             if not (payload/'DJ Duplicate Finder.exe').is_file(): raise ValueError('El paquete no incluye el ejecutable actualizado.')
             script=staging/'apply-update.ps1'
             script.write_text("""param([int]$WaitForPid,[string]$InstallRoot,[string]$PayloadRoot,[string]$Executable,[string]$NewVersion)\n$ErrorActionPreference = 'Stop'\ntry {\n  $p = Get-Process -Id $WaitForPid -ErrorAction SilentlyContinue\n  if ($p) { $p.WaitForExit() }\n  Get-ChildItem -LiteralPath $PayloadRoot | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $InstallRoot -Recurse -Force }\n  Set-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\DJDuplicateFinder' -Name DisplayVersion -Value $NewVersion -ErrorAction SilentlyContinue\n  Start-Process -FilePath $Executable -WorkingDirectory $InstallRoot\n} catch {\n  Add-Type -AssemblyName System.Windows.Forms\n  [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Error al actualizar') | Out-Null\n}\n""",encoding='utf-8')
@@ -307,6 +372,8 @@ class App(tk.Tk):
             self.after(600,self.destroy)
         except Exception as exc:
             if staging: shutil.rmtree(staging,ignore_errors=True)
+            try: Path(package).unlink(missing_ok=True)
+            except OSError: pass
             messagebox.showerror('Actualización',f'No se pudo aplicar el paquete:\n{exc}')
 
 def configure_bundled_ffmpeg():

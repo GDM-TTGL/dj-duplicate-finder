@@ -1,0 +1,12 @@
+DJ Duplicate Finder v3.0.5 para Windows
+
+Esta version incluye Python, FFmpeg y ffprobe; no requiere instalaciones manuales.
+La ventana se adapta al cambiar de tamaño. "Reproducir" abre el reproductor predeterminado de Windows.
+
+En Windows, la primera vez selecciona "Buscar actualizaciones" y conecta tu cuenta de GitHub con un token fine-grained de solo lectura para el repositorio privado. Se guarda en el Administrador de credenciales de Windows. Después, la app comprueba actualizaciones al abrirse y también desde ese botón; cuando encuentra una nueva versión, la descarga, verifica y te pregunta si quieres instalarla. No necesitas descargar ni seleccionar el ZIP manualmente.
+
+Si tienes v3.0.4 o una versión anterior, instala una vez el Setup v3.0.5 sobre la carpeta existente. Las versiones anteriores no pueden buscar actualizaciones por sí solas.
+
+La carpeta _DJ_DUPLICADOS solo almacena elementos en cuarentena. Revisa siempre las coincidencias y conserva respaldos antes de mover archivos.
+
+Avisos de terceros: consulta Avisos de terceros.txt.
